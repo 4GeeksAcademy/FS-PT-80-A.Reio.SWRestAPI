@@ -9,7 +9,6 @@ from flask_cors import CORS
 from utils import APIException, generate_sitemap
 from admin import setup_admin
 from models import db, User, People, Planets, Favorites
-#from models import Person
 
 app = Flask(__name__)
 app.url_map.strict_slashes = False
@@ -31,18 +30,16 @@ setup_admin(app)
 def handle_invalid_usage(error):
     return jsonify(error.to_dict()), error.status_code
 
-# generate sitemap with all your endpoints
+
 @app.route('/')
 def sitemap():
     return generate_sitemap(app)
 
 @app.route('/user', methods=['GET'])
 def handle_hello():
-
     response_body = {
         "msg": "Hello, this is your GET /user response "
     }
-
     return jsonify(response_body), 200
 
 # ___________________________________________________
@@ -64,6 +61,38 @@ def get_user(user_id):
 
 # ___________________________________________________
 
+@app.route('/user', methods=['POST'])
+def create_user():
+    data = request.get_json()
+
+
+    if not data or not data.get("username") or not data.get("email") or not data.get("password"):
+        return jsonify({"error": "Faltan campos obligatorios: username, email, password"}), 400
+
+  
+    if User.query.filter_by(username=data["username"]).first():
+        return jsonify({"error": "El nombre de usuario ya existe"}), 400
+    if User.query.filter_by(email=data["email"]).first():
+        return jsonify({"error": "El email ya está registrado"}), 400
+
+
+    new_user = User(
+        username=data["username"],
+        email=data["email"],
+        password=data["password"], 
+        is_active=True
+    )
+
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+        return jsonify({"success": "Usuario creado", "user": new_user.serialize()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+# ____________________________________________________
+
 @app.route('/people', methods=['GET'])
 def get_all_people():
     people = People.query.all()
@@ -72,7 +101,6 @@ def get_all_people():
 
 # ___________________________________________________
 
-
 @app.route('/people/<int:character_id>', methods=['GET'])
 def get_character(character_id):
     character = People.query.get(character_id)
@@ -80,9 +108,7 @@ def get_character(character_id):
         return jsonify({"error": "Character no encontrado"}), 404
     return jsonify(character.serialize()), 200
 
-
 # ___________________________________________________
-
 
 @app.route('/planets', methods=['GET'])
 def get_all_planets():
@@ -91,7 +117,6 @@ def get_all_planets():
     return jsonify(planets_serialized), 200
 
 # ___________________________________________________
-
 
 @app.route('/planets/<int:planet_id>', methods=["GET"])
 def get_planet(planet_id):
@@ -102,7 +127,6 @@ def get_planet(planet_id):
 
 # ___________________________________________________
 
-
 @app.route('/favorites/<int:user_id>', methods=['GET'])
 def get_favorites(user_id):
     favorites = Favorites.query.filter_by(user_id=user_id).all()
@@ -112,42 +136,32 @@ def get_favorites(user_id):
 
 # ___________________________________________________
 
-@app.route('/favorite/planet/<int:planet_id>', methods=['POST'])
-def add_fav_planet(planet_id):
-    data = request.get_json()
-    user_id = data.get("user_id")
-    if not user_id:
-        return jsonify({"error": "El id del usuario es obligatorio"}), 400
-    new_favorite = Favorites(
-        user_id=user_id,
-        planet_id=planet_id,
-        people_id=None 
-    )
-    try:
-        db.session.add(new_favorite)
-        db.session.commit()
-        return jsonify(new_favorite.serialize()), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": str(e)}), 500
-
-# ___________________________________________________
-
 @app.route('/favorite/people/<int:people_id>', methods=['POST'])
 def add_fav_character(people_id):
     data = request.get_json()
     user_id = data.get("user_id")
     if not user_id:
         return jsonify({"error": "El id del usuario es obligatorio"}), 400
+
+
+    user = User.query.get(user_id)
+    character = People.query.get(people_id)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    if not character:
+        return jsonify({"error": "Personaje no encontrado"}), 404
+
+    # Crear el nuevo favorito
     new_favorite = Favorites(
         user_id=user_id,
         planet_id=None,
         people_id=people_id
     )
+
     try:
         db.session.add(new_favorite)
         db.session.commit()
-        return jsonify(new_favorite.serialize()), 201
+        return jsonify({"success": "Personaje agregado a favoritos", "favorite": new_favorite.serialize()}), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
@@ -160,20 +174,53 @@ def remove_fav_character(people_id):
     user_id = data.get("user_id")
     if not user_id:
         return jsonify({"error": "El id del usuario es obligatorio"}), 400
+
+
     favorite = Favorites.query.filter_by(user_id=user_id, people_id=people_id).first()
     if not favorite:
         return jsonify({"error": "Favorito no encontrado"}), 404
+
     try:
         db.session.delete(favorite)
         db.session.commit()
-        return jsonify({"msg": f"Favorito con ID {people_id} ha sido eliminado"}), 200
+        return jsonify({"success": f"Favorito con ID {people_id} ha sido eliminado"}), 200
     except Exception as e:
-        db.session.rollback() 
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
-
 
 # ___________________________________________________
 
+@app.route('/favorite/planet/<int:planet_id>', methods=['POST'])
+def add_fav_planet(planet_id):
+    data = request.get_json()
+    user_id = data.get("user_id")
+    if not user_id:
+        return jsonify({"error": "El id del usuario es obligatorio"}), 400
+
+    # Verificar si el usuario y el planeta existen
+    user = User.query.get(user_id)
+    planet = Planets.query.get(planet_id)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    if not planet:
+        return jsonify({"error": "Planeta no encontrado"}), 404
+
+    # Crear el nuevo favorito
+    new_favorite = Favorites(
+        user_id=user_id,
+        planet_id=planet_id,
+        people_id=None
+    )
+
+    try:
+        db.session.add(new_favorite)
+        db.session.commit()
+        return jsonify({"success": "Planeta agregado a favoritos", "favorite": new_favorite.serialize()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+# ___________________________________________________
 
 @app.route('/favorite/planet/<int:planet_id>', methods=['DELETE'])
 def remove_fav_planet(planet_id):
@@ -181,17 +228,19 @@ def remove_fav_planet(planet_id):
     user_id = data.get("user_id")
     if not user_id:
         return jsonify({"error": "El id del usuario es obligatorio"}), 400
+
+  
     favorite = Favorites.query.filter_by(user_id=user_id, planet_id=planet_id).first()
     if not favorite:
         return jsonify({"error": "Favorito no encontrado"}), 404
+
     try:
         db.session.delete(favorite)
         db.session.commit()
-        return jsonify({"msg": f"Favorito con ID {planet_id} ha sido eliminado"}), 200
+        return jsonify({"success": f"Favorito con ID {planet_id} ha sido eliminado"}), 200
     except Exception as e:
-        db.session.rollback() 
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
-
 
 # ___________________________________________________
 
